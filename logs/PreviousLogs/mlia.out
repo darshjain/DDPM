@@ -1,0 +1,143 @@
+
+======================================================================
+                          GPU CONFIGURATION                           
+======================================================================
+  Device:           NVIDIA A100-SXM4-40GB
+  CUDA Version:     12.8
+  Total VRAM:       39.49 GB
+  Compute Cap:      8.0
+  Multi-Processors: 108
+======================================================================
+
+Loading model...
+Non-A100 GPU detected, using math or mem efficient attention if input tensor is on cuda
+Model loaded. Parameters: 35,711,491
+Model VRAM usage: 1.19 GB
+
+Initializing monitored trainer...
+
+
+======================================================================
+                          STARTING TRAINING                           
+======================================================================
+  Training steps:   30,000
+  Batch size:       256
+  Gradient accum:   1
+  Effective batch:  256
+  Learning rate:    1.00e-04
+  Save interval:    Every 2000 steps
+  AMP enabled:      False
+======================================================================
+
+Starting GPU memory monitoring...
+Saving checkpoint at step 2000...
+Generating samples...
+✓ Sample generation successful
+✓ Saved samples to sample-1.png
+Stacking Inception features for 50000 samples from the real dataset.
+Dataset stats cached to ./results_combinedV2/dataset_stats.npz for future use.
+Stacking Inception features for 50000 generated samples.
+fid_score: 275.72531780004647
+Saving checkpoint at step 4000...
+Generating samples...
+✓ Sample generation successful
+✓ Saved samples to sample-2.png
+Stacking Inception features for 50000 generated samples.
+fid_score: 214.27814917872314
+Saving checkpoint at step 6000...
+Generating samples...
+✓ Sample generation successful
+✓ Saved samples to sample-3.png
+Stacking Inception features for 50000 generated samples.
+fid_score: 163.05051134848478
+Saving checkpoint at step 8000...
+Generating samples...
+✓ Sample generation successful
+✓ Saved samples to sample-4.png
+Stacking Inception features for 50000 generated samples.
+fid_score: 134.23316101513197
+Saving checkpoint at step 10000...
+Generating samples...
+✓ Sample generation successful
+✓ Saved samples to sample-5.png
+Stacking Inception features for 50000 generated samples.
+fid_score: 117.81995760782382
+Saving checkpoint at step 12000...
+Generating samples...
+✓ Sample generation successful
+✓ Saved samples to sample-6.png
+Stacking Inception features for 50000 generated samples.
+fid_score: 107.58349138354185
+Saving checkpoint at step 14000...
+Generating samples...
+✓ Sample generation successful
+✓ Saved samples to sample-7.png
+Stacking Inception features for 50000 generated samples.
+fid_score: 101.92686795320265
+Saving checkpoint at step 16000...
+Generating samples...
+✓ Sample generation successful
+✓ Saved samples to sample-8.png
+Stacking Inception features for 50000 generated samples.
+fid_score: 99.85928520972652
+Saving checkpoint at step 18000...
+Generating samples...
+✓ Sample generation successful
+✓ Saved samples to sample-9.png
+Stacking Inception features for 50000 generated samples.
+fid_score: 99.59218169122784
+Saving checkpoint at step 20000...
+Generating samples...
+✓ Sample generation successful
+✓ Saved samples to sample-10.png
+Stacking Inception features for 50000 generated samples.
+fid_score: 98.9093725092273
+Saving checkpoint at step 22000...
+Generating samples...
+✓ Sample generation successful
+✓ Saved samples to sample-11.png
+Stacking Inception features for 50000 generated samples.
+fid_score: 102.34787606186467
+Saving checkpoint at step 24000...
+Generating samples...
+✓ Sample generation successful
+✓ Saved samples to sample-12.png
+Stacking Inception features for 50000 generated samples.
+fid_score: 103.90317255972712
+Saving checkpoint at step 26000...
+Generating samples...
+✓ Sample generation successful
+✓ Saved samples to sample-13.png
+Stacking Inception features for 50000 generated samples.
+fid_score: 105.27973205706843
+Saving checkpoint at step 28000...
+Generating samples...
+✓ Sample generation successful
+✓ Saved samples to sample-14.png
+Stacking Inception features for 50000 generated samples.
+fid_score: 107.38509854823752
+Saving checkpoint at step 30000...
+Generating samples...
+✓ Sample generation successful
+✓ Saved samples to sample-15.png
+Stacking Inception features for 50000 generated samples.
+fid_score: 106.44311721956956
+training complete
+
+======================================================================
+                           TRAINING SUMMARY                           
+======================================================================
+  Total training time:  39:31:44
+======================================================================
+
+
+======================================================================
+                        GPU MEMORY STATISTICS                         
+======================================================================
+  Total VRAM:     39.49 GB
+  Current:        37.74 GB  ( 95.6%)
+  Peak:           36.60 GB  ( 92.7%)
+  Average:         3.71 GB  (  9.4%)
+  Available:       1.76 GB
+======================================================================
+

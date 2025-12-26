@@ -4,11 +4,11 @@ __pycache__/
 *$py.class
 .venv/
 .env
+venv/
 
-# Distribution / Builds
-build/
-dist/
-*.egg-info/
+**/*.pt
+
+**/.git/objects/pack/*.pack
 
 # Jupyter Notebooks
 .ipynb_checkpoints
@@ -19,18 +19,3 @@ dist/
 
 # Project Specific - Large Files & Artifacts
 sysu-shape-dataset/
-results*/
-logs/
-*.pt
-*.pth
-*.npz
-
-# Generated Images
-*.png
-!loss_plot.png
-
-# Documentation / PDFs
-*.pdf
-
-# Slurm Output (if generated in root)
-slurm-*.out

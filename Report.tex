@@ -1,0 +1,475 @@
+\documentclass{MLIA} % Include author names
+%\documentclass[anon]{midl} % Anonymized submission
+
+% The following packages will be automatically loaded:
+% jmlr, amsmath, amssymb, natbib, graphicx, url, algorithm2e
+% ifoddpage, relsize and probably more
+% make sure they are installed with your latex distribution
+
+\usepackage{mwe} % to get dummy images
+\usepackage{pifont}
+\usepackage{float}
+
+% Header for extended abstracts
+\jmlrproceedings{MIDL}{University of Virginia}
+\jmlrpages{}
+\jmlryear{2025}
+
+% to be uncommented for submissions under review
+\jmlrworkshop{ECE 4501/6501 - CS 4501/6501: Machine Learning in Image Analysis}
+
+
+\title[Denoising Diffusion Probabilistic Models]{Denoising Diffusion Probabilistic Models}
+
+ % Use \Name{Author Name} to specify the name.
+ % If the surname contains spaces, enclose the surname
+ % in braces, e.g. \Name{John {Smith Jones}} similarly
+ % if the name has a "von" part, e.g \Name{Jane {de Winter}}.
+ % If the first letter in the forenames is a diacritic
+ % enclose the diacritic in braces, e.g. \Name{{\'E}louise Smith}
+
+ % Two authors with the same address
+ % \midlauthor{\Name{Author Name1} \Email{abc@sample.edu}\and
+ %  \Name{Author Name2} \Email{xyz@sample.edu}\\
+ %  \addr Address}
+
+ % Three or more authors with the same address:
+ % \midlauthor{\Name{Author Name1} \Email{an1@sample.edu}\\
+ %  \Name{Author Name2} \Email{an2@sample.edu}\\
+ %  \Name{Author Name3} \Email{an3@sample.edu}\\
+ %  \addr Address}
+
+
+% Authors with different addresses:
+% \midlauthor{\Name{Author Name1} \Email{abc@sample.edu}\\
+% \addr Address 1
+% \AND
+% \Name{Author Name2} \Email{xyz@sample.edu}\\
+% \addr Address 2
+% }
+
+%\footnotetext[1]{Contributed equally}
+
+% More complicate cases, e.g. with dual affiliations and joint authorship
+\midlauthor{\Name{Shrey Khandelwal} \Email{zjy6us@virginia.edu}\\
+\Name{Asjad Sajid Nirban} \Email{wjw8yd@virginia.edu}\\
+\Name{Darsh Naresh Jain} \Email{bhj4jy@virginia.edu}\\
+\Name{Omkar Bhambure} \Email{dny9jg@virginia.edu}
+}
+
+\begin{document}
+
+\maketitle
+
+\begin{abstract}
+This paper evaluates Denoising Diffusion Probabilistic Models (DDPM) as a robust alternative to Generative Adversarial Networks (GANs) and Variational Autoencoders (VAEs) for unconditional image synthesis. By unifying variational inference with denoising score matching, we implemented a diffusion framework capable of learning the data distribution's score function through iterative noise prediction. We trained a U-Net architecture on the SYSU-Shapes dataset (1,541 images) and conducted an ablation study across five experimental configurations to isolate the effects of learning rate, augmentation, and model capacity. Contrasting initial hypotheses, we observed that lower-capacity models (dimension 64) succumbed to overfitting and noise memorization, whereas increasing model width (dimension 128) significantly stabilized convergence. The optimized configuration achieved a Fréchet Inception Distance (FID) of 59.01 and an Inception Score (IS) of 6.57. These results demonstrate that ensuring sufficient model capacity is a prerequisite for generating high-fidelity samples with diffusion models, particularly when operating on limited datasets. \\
+\end{abstract} 
+\begin{keywords}
+Denoising Diffusion Probabilistic Models, Generative Modeling, Image Synthesis, Variational Inference, Denoising Score Matching, Deep Learning.
+\end{keywords}
+
+\section{Introduction (Darsh Naresh Jain)}
+
+\subsection{Problem Statement}
+Generative Modeling has advanced rapidly in recent year especially since the advent of ChatGPT in 2022, yet widely used approaches as GAN - Generative Adversarial Networks still suffer from persistent instability, mode collapse and bad likelihood estimation amongst other. Variational Autoencoders (VAEs) are grounded in principled probabilistic framework but still tend to produce oversmoothed sample images due to restrictive latent assumptions and decoder limitations
+In essence, these limitations create a gap between the theoretical goals of the modeling methodology and the practical behavior of the existing models.
+\\
+The paper proposes DDPM - Denoising Diffusion Probabilistic Models, an alternative framework which replaces adverserial training by sequential noising and denoising processes managed by a tractable probabilistic objective. This goal of this formulation strategy is to bypass the optimisation weaknesses of GANs and instead offer likelihood based structure that VAEs struggle to match in perceptual quality of the images.
+\\
+The central problem addressed by this method is whether a diffusion based generative process, developed and trained through variational inference and score matching, possibly produce high quality images while avoiding the problems introduced by GANs like training failures and instability as well as oversmoothing problems of VAEs. The paper further investigates this question by formulating and designing the diffusion process, deriving its training objective, and evaluating the resulting model on standard image generation benchmarks.
+
+\subsection{Literature Review }
+% comparing the previous work: GANs, VAE,... 
+% \ref{tab:gen_compare}
+Generative modeling before diffusion methods was dominated by VAEs, GANs, Flow based models and autoregressive models. We also discuss the shortcomings and comparions of these methods in Table \ref{tab:gen_compare}.
+Each method offered its own set of useful ideas but introduced disadvantages as well. VAEs provided a highly principled probablistic framework with stable training but were heavily reliant on simple latent distributions and frequently resulted in oversmoothened images which lacked details. 
+\\
+
+GANs \cite{goodfellow2014gan} introduced high-fidelity image synthesis through adversarial learning. Despite the success of the model, they still remain a challenge because of optimisation due to the sensitive balance required between generator and discriminator. It also introduced training instabilities, mode collapse and sensitivity to hyperparameters. This tradeoff is well reflected in Table \ref{tab:gen_compare}. In essence, GANs excel in quality but are highly unstable and perform poorly in likelihood.
+
+Autogressive models such as PixelCNN \cite{van2016pixel} and PixelCNN++ \cite{salimans2017pixelcnn++} form the base joint distribution as a product of conditional distributions which the paper discusses in short. They achieve extremely high likelihoods and have a stable optimisation but lack in speed of generation of images due to sequential pixel-by-pixel sampling. The table \ref{tab:gen_compare} shows this limitation 
+but lack large scale image generation.
+
+Before the paper proposed DDPM methodology, diffusion-based ideas existed on the basis of score matching \cite{hyvarinen2005estimation}, denoising autoencoders \cite{vincent2011connection} and Langevin dynamics \cite{welling2011bayesian}. There was clear lacking in terms of practility of the training framework as well as scalability. These approaches did suggest however iterative refinement of noisy data could approximate complex distribution for images.
+
+The DDPM paper \cite{Ho:DDPM:2020} which our experiment focuses on, bridged this gap by linking forward noising process with the reverse denoising  process learning thorugh a tractable variational objective. This combination made diffusion model trainable at scale and revealed that small simple denoising objective could approximate true score function of the data distribution. As a result DDPMs combine all the advantages in \ref{tab:gen_compare} to give better results.
+
+
+\begin{table}[htbp]
+\floatconts
+  {tab:gen_compare}
+  {\caption{Comparison of major generative modeling approaches prior to DDPM.}}
+  {
+  \begin{tabular}{lcccc}
+    \bfseries Approach & \bfseries Quality & \bfseries Stability & \bfseries Likelihood & \bfseries Status \\
+    \hline
+    GANs & {\checkmark} & {\Large \texttimes} & {\Large \texttimes} & SOTA but unstable \\
+    VAEs/Flows & {\Large \texttimes} & {\checkmark} & {\checkmark} & Stable but blurry \\
+    Autoregressive & {\large !} & {\checkmark} & {\checkmark} & Slow generation \\
+    Diffusion & {\Large \texttimes} & {\checkmark} & {\checkmark} & Theory \checkmark\quad Practice \ding{55} \\
+  \end{tabular}
+  }
+\end{table}
+
+
+
+\subsection{Challenge}
+The paper focuses on several key challenges which are faced during implementation phase of the model as well, These challenges must be solved to make the diffusion models practical and comparable with other models and implementations.
+
+\begin{itemize}
+    \item \textbf{Designing a tractable forward diffusion process:} The implementation needs to have a corruption process that gradually adds noise to the data but simple enough to derive a workable variational objective.
+
+    \item \textbf{Learning the reverse diffusion process:} Reversing thousands of noise steps one by one is inherently difficult. The challenge to show that a neural network can accurately approximate the reverse transition distribution at each timestep using a stable and optimizable loss.
+
+    \item \textbf{Ensuring stable training through a simplified objective:} The model must remain stable in terms of training and predicting noise, rather than learning full transition parameters, provides reliable gradients and at the same time avoiding instabilities with the model.
+
+    \item \textbf{Computational Cost:} The model training and implementation as well as real runtime is extremely cost intensive as it involves step by step computations to remove noise a pixel at a time. This affects the speed and practical applications for the system.
+
+    \item \textbf{Image Quality:} The implementation needs to consider generation of high image quality in terms of surpassing other models like GANs in perceptual quality on standardized benchmarks.
+
+    \item \textbf{Scalibility:} The experiments must also consider scalability and generalisation such that it works across all the other datasets like CIFAR-10 and CelebA so that we have better robust results.
+     
+\end{itemize}
+
+
+\section{Background (Omkar Bhambure)}
+
+To truly appreciate the advancements produced by Diffusion Probabalistic Models, we first must briefly review the historical development of deep generative modeling. Particularly, in this section, we review the architectures that have fundamentally shaped the field: namely, Generative Adversarial Networks (GANs), Autoregressive models, Normalized Flows, and Variational Autoencoders (VAEs). This review focuses on their respective strengths and limitations regarding image synthesis. After this, we present the theoretical foundation of Diffusion Models and elucidate the essential link to Denoising Score Matching that facilitates our particular implementation.
+
+\subsection{Generative Adversarial Networks (GANs)}
+For years, Generative Adversarial Networks (GANs) were considered the best for synthesizing high-fidelity images. First introduced by \cite{goodfellow2014gan}, this fundamental technique involves a zero-sum game between two neural networks: a generator that creates fake data from random noise, and a discriminator that attempts to distinguish fake data from real. In order to "fool" the discriminator, the generator must iteratively create progressively realistic samples during this adversarial training phase.
+
+Subsequent works have significantly scaled this architecture to achieve state-of-the-art results. To improve training stability, \cite{karras2018gan} suggested a training methodology that helps in building both the generator and discriminator layer-by-layer, resulting in generation of high-resolution images. Further improving on this, \cite{brock2019gan} introduced BigGAN, which showed that increasing batch sizes and model capacity might result in photorealistic images on high-resolution datasets such as ImageNet.
+
+Despite their excellent sample quality, GANs come with significant disadvantages. They are infamously hard to train, and often fails to converge, thanks to the unstable nature of the adversarial min-max game. Furthermore, GANs exhibit "mode collapse", where the generator would output a limited variety of samples, thus failing to capture the complete essence of the target distribution.
+
+\subsection{Autoregressive Models}
+Unlike GAN's implicit modeling approach, Autoregressive models treat generative tasks as a sequence modeling problem. Each pixel or audio sample is generated based on the condition of previously generated values, by virtue of decomposing the joint probability distribution of the data into a product of conditional probabilities.
+
+PixelCNN and PixelRNN, authored by \cite{van2016pixel}, demonstrated how utilizing autoregressive dependencies could improve the efficacy of modeling complex natural images. Using subscale pixel networks, \cite{menick2019am} made further improvements in the generation of high-fidelity images. Similar progress was observed in the audio space, particularly in speech generation, courtesy of WaveNet \cite{wavenet2016} applying autoregressive principles to raw audio. The results significantly outperformed traditional parametric text-to-speech systems.
+
+Autoregressive models offer a high degree of mathematical tractability; they provide explicit computation of the log-likelihood of the data, thus making them stable to train using maximum likelihood estimation. However, they require high computational costs during inference due to their dependency on sequential sampling. Furthermore, sampling of high-resolution images or long audio sequences is very slow compared to parallel architectures, due to pixel-by-pixel generation. 
+
+\subsection{Normalizing Flows}
+Normalizing Flows provide a third family of generative models. The basic idea is to start from a simple base distribution (often a standard Gaussian) and then transform it step by step using a series of invertible, differentiable mappings. Because each transformation is invertible and has a tractable Jacobian, we can compute exact log-likelihoods using the change-of-variables formula, which is a key difference from GANs.
+
+Foundational work in this area include RealNVP \cite{dinh2016density}, which introduced coupling layers that make the transformations both invertible and efficient to compute. \cite{kingma2018glow} later extended these ideas in Glow, using invertible 1x1 convolutions and other tweaks to generate high-quality images with log-likelihoods competitive with autoregressive models. Applications of flow-based architectures are not limited to images, as evidenced by WaveGlow \cite{waveglow2019}.
+
+However, flows come with their own trade-offs. To keep the model invertible and the Jacobian determinant easy to compute, the architecture has to follow fairly strict design rules. These constraints can limit how expressive the model is compared to more flexible architectures like GANs or VAEs.
+
+\subsection{Variational Autoencoders (VAEs)}
+Variational Autoencoders (VAEs), first introduced by \cite{vae2013}, are likelihood-based generative models that approach the problem from a probabilistic perspective rather than an adversarial one. A VAE consists of an encoder (or recognition network) that maps an input $x$ to the parameters of a latent distribution $q(z \mid x)$, and a decoder that reconstructs the input from latent samples $z$.  Now, instead of maximizing the intractable data log-likelihood directly, VAEs optimize the Evidence Lower Bound (ELBO), which serves as a tractable surrogate objective for learning both the latent representation and the generative model. 
+
+The primary strengths of VAEs lie is their training stability. They can smoothly avoid convergence problems that we saw in GANs because of their reliance on a differentiable objective thar is clearly defined and is rooted in variational inference. VAEs also provide an explicit latent space with a clear probabilistic interpretation, which makes them appealing for tasks such as interpolation, representation learning, and downstream supervised problems.
+
+However, this stability comes with a well-known trade-off in sample quality. The reconstruction term in the ELBO is often implemented as a pixel-wise loss (e.g., Mean Squared Error), which encourages the model to average over plausible explanations of the data. Combined with the variational approximation, this tends to wash out high-frequency details and leads to characteristically "blurry" samples when compared to GANs. Recent work, such as VQ-VAE-2 \cite{vae2-2019}, has partially addressed this issue by discretizing the latent space and introducing a hierarchical structure, enabling VAEs to generate more diverse and sharper images that are competitive with GAN-based methods.
+
+
+
+\section{Methodology (Shrey Khandelwal, Asjad Sajid Nirban, Darsh Naresh Jain)} DDPMs are latent variable models trained using variational inference to learn and approximate the underlying data distribution. The approach relies on two opposing process: a \textbf{fixed} forward diffusion process that gradually destroys the Image, and a \textbf{learned} reverse process that reconstruct it.
+
+\subsection{Diffusion Processes Formulation}
+
+\subsubsection{The Forward Diffusion Process ($q$) (Fixed Process)}
+The forward process is defined as a fixed Markov chain that gradually converts the original image $x_0$ into a noisy image $x_T$ by adding Gaussian noise over $T$ steps using a variance schedule $\beta_t$. The transitions are conditional Gaussians:
+\begin{equation}
+q(x_{t}|x_{t-1}) := \mathcal{N}(x_{t}; \sqrt{1-\beta_{t}}x_{t-1}, \beta_{t}I)
+\end{equation}
+An important property of this construction is that it allows drawing samples of $x_t$ directly from $x_0$ in closed form, without simulating every intermediate step. This leads to more efficient training:
+\begin{equation}
+q(x_{t}|x_{0}) = \mathcal{N}(x_{t}; \sqrt{\overline{\alpha}_{t}}x_{0}, (1-\overline{\alpha}_{t})I)
+\end{equation}
+where $\alpha_t := 1 - \beta_t$ and $\overline{\alpha}_t := \prod_{s=1}^{t}\alpha_{s}$.
+
+\subsubsection{The Reverse Generative Process ($p_{\theta}$) (Learning Process)}
+The reverse process is a learned Markov chain that generates data by denoising $x_T \sim \mathcal{N}(0, I)$. It is defined by Gaussian transitions parameterized by $\theta$:
+\begin{equation}
+p_{\theta}(x_{t-1}|x_{t}) := \mathcal{N}(x_{t-1}; \mu_{\theta}(x_{t},t), \Sigma_{\theta}(x_{t},t))
+\end{equation}
+\textbf{Fixed Variance ($\Sigma_\theta$):} To simplify the model, the variance $\Sigma_{\theta}(x_{t},t)$ is set to time-dependent constants $\sigma_t^2 I$. Experimental analysis showed that setting $\sigma_t^2 = \beta_t$ yields high-quality samples without the instability found when attempting to learn variances. Thus, the model focuses solely on learning the mean $\mu_{\theta}$.
+
+\subsection{Unified Theoretical Framework}
+The core strength of this methodology lies in its ability to unify three distinct theoretical frameworks under a single model architecture: Variational Inference, Denoising Score Matching, and Langevin Dynamics.
+
+\subsubsection{Variational Inference and Denoising Score Matching}
+The model is rigorously trained using variational inference, optimizing the negative log-likelihood via the Variational Lower Bound (VLB). The analysis of the VLB reveals that the optimal parameterization for $\mu_{\theta}$ is not to predict the mean directly, but to predict the noise $\epsilon$ added at step $t$.
+
+This reparameterization establishes an explicit equivalence with \textbf{Denoising Score Matching}. By training a function approximator $\epsilon_{\theta}(x_t, t)$ to predict the noise, the model effectively learns the score function (gradient of the log density) of the data distribution:
+\begin{equation}
+\mu_{\theta}(x_{t},t) = \frac{1}{\sqrt{\alpha_{t}}} \left( x_{t} - \frac{\beta_{t}}{\sqrt{1-\overline{\alpha}_{t}}}\epsilon_{\theta}(x_{t},t) \right)
+\end{equation}
+This derivation uses the forward process posterior mean $\tilde{\mu}_t$ as a target for $\mu_{\theta}$.
+
+\subsubsection{Connection to Langevin Dynamics and Sampling}
+This score-based parameterization connects the generative process to \textbf{Langevin Dynamics}. The sampling procedure (Algorithm 2), which iteratively subtracts the predicted noise $\epsilon_{\theta}$ and adds a stochastic term, mimics the update steps of annealed Langevin dynamics. This ensures the model produces high-quality samples by following the gradients of the data density manifold.
+
+\begin{algorithm2e}[H]
+\caption{Sampling}
+\label{alg:sampling}
+\KwIn{$x_T \sim \mathcal{N}(0, I)$}
+\KwOut{$x_0$}
+\For{$t \leftarrow T$ \KwTo $1$}{
+    $z \sim \mathcal{N}(0, I)$ if $t > 1$, else $z = 0$\;
+    $x_{t-1} = \frac{1}{\sqrt{\alpha_t}} \left( x_t - \frac{1-\alpha_t}{\sqrt{1-\overline{\alpha}_t}} \epsilon_\theta(x_t, t) \right) + \sigma_t z$\;
+}
+\Return{$x_0$}
+\end{algorithm2e}
+
+\subsection{Simplified Training Objective}
+While derived from the exact VLB, the methodology employs a simplified objective that discards complex weighting terms. This loss reduces to a weighted Mean Squared Error between the true noise $\epsilon$ and the predicted noise $\epsilon_{\theta}$:
+\begin{equation}
+L_{simple}(\theta) := \mathbb{E}_{t,x_{0},\epsilon} \left[ ||\epsilon - \epsilon_{\theta}(\sqrt{\overline{\alpha}_{t}}x_{0} + \sqrt{1-\overline{\alpha}_{t}}\epsilon, t)||^{2} \right]
+\end{equation}
+This simplification improves sample quality by down-weighting terms at small $t$, allowing the network to prioritize the more difficult denoising tasks at larger timesteps.
+
+\begin{algorithm2e}[H]
+\caption{Training}
+\label{alg:training}
+\Repeat{converged}{
+    $x_0 \sim q(x_0)$\;
+    $t \sim \text{Uniform}(\{1, \dots, T\})$\;
+    $\epsilon \sim \mathcal{N}(0, I)$\;
+    Take gradient descent step on $\nabla_\theta || \epsilon - \epsilon_\theta(\sqrt{\overline{\alpha}_t}x_0 + \sqrt{1-\overline{\alpha}_t}\epsilon, t) ||^2$\;
+}
+\end{algorithm2e}
+
+\subsection{Implementation Architecture}
+The reverse process is implemented using a U-Net backbone similar to an unmasked PixelCNN++ with Group Normalization. To handle the temporal dependency, the network is conditioned on the timestep $t$ via Transformer sinusoidal position embeddings injected into each residual block. Self-attention mechanisms are further employed at the $16 \times 16$ feature map resolution to capture global spatial dependencies.
+
+
+
+
+
+\section{Experiment (Shrey Khandelwal)}
+In this experiment, we implemented a Denoising Diffusion Probabilistic Model (DDPM) to generate synthetic images. We used the SYSU-Shapes dataset, provided by the course staff, to train our model from scratch. The main goal was to test if the model could learn to create realistic shapes—like planes and cars—without using any class labels (unconditional generation). All training and testing were conducted on the University of Virginia's Rivanna HPC cluster to handle the computational workload.
+
+\subsection{Dataset}
+We utilized the SYSU-Shapes Dataset for this study. Originally structured into five distinct object categories—Airplanes, Bicycles, Boats, Cars, and Motorbikes—this dataset is designed to present realistic computer vision challenges, including cluttered backgrounds, significant intraclass variations, and diverse object poses.
+
+For the purpose of our unconditional generation experiment, we aggregated the images from all categories into a combined directory, treating the task as a single-distribution modeling problem. The dataset comprises a total of 1,541 images. This relatively small sample size serves as a stress test for the DDPM's ability to generalize without overfitting.
+
+\begin{figure}[H]
+    \centering
+    % REPLACE 'dataset_grid.png' with your actual file name
+    \includegraphics[width=0.4\textwidth]{dataset_grid.png}
+    \caption{Representative samples from the SYSU-Shapes dataset showing the five object categories (Airplanes, Bicycles, Boats, Cars, Motorbikes). Note the varied backgrounds and poses.}
+    \label{fig:dataset_grid}
+\end{figure}
+
+\subsection{Preprocessing}
+
+\subsubsection{Data Loading and Transformation}
+We implemented a custom \texttt{AugmentedDataset} class to recursively load images from the SYSU-Shapes directory. To ensure consistency and balance computational constraints, all images were converted to RGB format and resized to a fixed resolution of $64 \times 64$ pixels.
+
+\begin{figure}[H]
+    \centering
+    % REPLACE 'resize_comparison.png' with your actual file name
+    \includegraphics[width=0.9\textwidth]{resize_comparison.png}
+    \caption{Resolution comparison. Left: Original high-resolution image. Right: The same image resized to $64 \times 64$ for training. This lower resolution limits the model's ability to generate fine details.}
+    \label{fig:resize_comp}
+\end{figure}
+
+\subsubsection{Augmentation Strategy}
+To prevent overfitting on the small dataset (1,541 images), we utilized two distinct strategies:
+\begin{itemize}
+    \item \textbf{No Augmentation:} Used for baseline and stability experiments (including the Low LR tests).
+    \item \textbf{Mild Augmentation:} Used for our high-capacity models (Dim 96 and 128), consisting solely of Random Horizontal Flips with $p=0.5$.
+\end{itemize}
+
+\textit{Note:} We briefly attempted heavier augmentations (random rotations and color jittering) on the Dimension-64 model. However, preliminary tests showed immediate performance degradation, so we discarded this approach to focus on model capacity and stability.
+
+\subsubsection{Batching}
+We organized the data into batches of 64 images. Shuffling was enabled at the start of every epoch to randomize the data order and assist with convergence.
+
+\subsection{Experimental Setup}
+
+\subsubsection{Training Configuration}
+We trained the DDPM model using the Adam optimizer on the University of Virginia's Rivanna HPC cluster. Given the small dataset size, we reduced the batch size to \textbf{64} to ensure stable gradient updates. To further stabilize the generation process, we applied Exponential Moving Average (EMA) to the model weights with a decay rate of 0.995.
+
+We conducted a total of five distinct experiments to isolate the effects of learning rate, augmentation, and model capacity. Most experiments were trained for \textbf{100,000 iterations} to ensure full convergence, with the exception of the Baseline model, which was terminated at 70,000 steps after performance plateaued. We did not use a train-test split; instead, we used the entire dataset of 1,541 images for training to maximize the data available to the model.
+
+\begin{table}[h]
+    \centering
+    \resizebox{\columnwidth}{!}{%
+    \begin{tabular}{|l|c|c|l|l|}
+        \hline
+        \textbf{Experiment ID} & \textbf{Dim} & \textbf{LR} & \textbf{Augmentation} & \textbf{Purpose} \\
+        \hline
+        \textbf{Baseline} & 64 & $1 \times 10^{-4}$ & None & Original baseline (70k steps) \\
+        \textbf{Exp 1 (Low LR)} & 64 & $2 \times 10^{-5}$ & None & Stability test \\
+        \textbf{Exp 2 (Low LR+Aug)} & 64 & $2 \times 10^{-5}$ & Horizontal Flip & Augmentation impact \\
+        \textbf{Exp 3 (Deeper)} & 96 & $1 \times 10^{-4}$ & Horizontal Flip & Capacity increase \\
+        \textbf{Exp 4 (Deepest)} & \textbf{128} & $1 \times 10^{-4}$ & \textbf{Horizontal Flip} & \textbf{Max capacity test} \\
+        \hline
+    \end{tabular}
+    }
+    \caption{Summary of the five experimental configurations. "Dim" refers to the base channel dimension of the U-Net.}
+    \label{tab:experiments}
+\end{table}
+
+\subsubsection{Evaluation Protocol}
+To assess the quality of our model, we used two standard metrics: Fréchet Inception Distance (FID) and Inception Score (IS). We evaluated the model by generating checkpoints every 4,000 training steps to track convergence over time.
+
+\textbf{Generation settings:} For every evaluation step, we generated 2,500 synthetic samples at $64 \times 64$ resolution. We used dynamic batching to fit these samples into GPU memory using the standard diffusion sampling process.
+
+\textbf{Metric Details:}
+\begin{itemize}
+    \item \textbf{Fréchet Inception Distance (FID):} We calculated FID by comparing the statistics of our 2,500 generated samples against the entire real training dataset using a pre-trained InceptionV3 network (pool3 layer). Lower scores indicate better quality.
+    \item \textbf{Inception Score (IS):} We calculated IS using the same batch of 2,500 generated images split into 10 groups. Higher scores indicate that the generated images are distinct and recognizable objects.
+\end{itemize}
+
+\subsection{Results}
+
+We evaluated the training progress and final generation quality across all five experimental configurations using both quantitative metrics and visual inspection.
+
+\subsubsection{Training Dynamics and Loss Analysis}
+Our initial hypothesis was that given the small dataset size (1,541 images compared to the 50,000+ typically used in DDPM papers), a smaller model dimension of 64 would be sufficient and prevent overfitting. However, our loss analysis (Figure \ref{fig:loss_comparison_all}) strongly contradicted this assumption, revealing that model capacity was the primary bottleneck.
+
+We monitored the training loss over 100,000 iterations. Key statistics from our experiments include:
+
+\begin{enumerate}
+    \item \textbf{Baseline (Dim 64):} The model hit a low loss of \textbf{0.0013} early (Step ~26k) but was unstable, oscillating to a final average of 0.011.
+    \item \textbf{Low LR (Dim 64, No Aug):} Lowering the learning rate improved stability, finding a deeper minimum of \textbf{0.0010} and a lower final average (0.0079). This confirms that for small models, a lower LR aids convergence.
+    \item \textbf{Low LR + Aug (Dim 64):} This configuration yielded the \textbf{highest final loss (0.0124)}. This confirms that augmentation made the task too difficult for the limited capacity of the 64-dimensional model.
+    \item \textbf{Dim 96 (Scaled Up):} A massive performance jump. Scaling to Dim 96 cut the minimum loss in half to \textbf{0.0006}.
+    \item \textbf{Dim 128 (Best Model):} The champion of our experiments. It achieved the absolute lowest loss of \textbf{0.0005} (a 20x reduction in error compared to the baseline's plateau) and continued to improve right up to the 100,000th step.
+\end{enumerate}
+
+\textbf{Conclusion on Dynamics:} While augmentation hurt the small model, the larger models had sufficient capacity to absorb the augmented data, translating it into better generalization rather than training instability.
+
+\begin{figure}[h]
+    \centering
+    % REPLACE with your COMBINED LOSS PLOT filename
+    \includegraphics[width=0.75\textwidth]{comparison_loss.png}
+    \caption{Comparative Training Loss. Note the clear stratification: the Dim 128 model (purple line) achieves a significantly lower loss floor compared to the clustered Dim 64 models, proving capacity was the limiting factor.}
+    \label{fig:loss_comparison_all}
+\end{figure}
+
+\subsubsection{Quantitative Performance}
+We measured generation quality using Fréchet Inception Distance (FID) and Inception Score (IS). The validation results mirrored the loss analysis.
+
+\textbf{1. Fréchet Inception Distance (FID):}
+Figure \ref{fig:fid_comparison} illustrates the FID trajectory. The Baseline and Low LR experiments hit a "capacity wall," plateauing at an FID of approximately \textbf{110}. Increasing the dimension to 128 shattered this barrier, achieving a \textbf{best FID of 59.01}.
+
+\textbf{2. Inception Score (IS):}
+Consistent with the FID results, the Dim 128 model achieved a peak \textbf{IS of 6.57}, compared to the Baseline's 5.4.
+
+\begin{figure}[h]
+    \centering
+    % REPLACE with your combined FID plot filename
+    \includegraphics[width=0.7\textwidth]{comparison_fid.png}
+    \caption{FID Score Comparison (Lower is Better). A clear performance gap is visible: the Dim 64 models plateau around 110, while the Dim 128 model successfully descends to 59.01.}
+    \label{fig:fid_comparison}
+\end{figure}
+
+\begin{figure}[h]
+    \centering
+    % REPLACE with your combined IS plot filename
+    \includegraphics[width=0.7\textwidth]{comparison_is.png}
+    \caption{Inception Score Comparison - The Dim 128 model consistently achieves higher scores, peaking at 6.57.}
+    \label{fig:is_comparison}
+\end{figure}
+
+\subsubsection{Qualitative Analysis}
+Figure \ref{fig:best_result} displays the generated samples from our best-performing configuration (Dim 128 + Augmentation).
+
+Unlike the "dream-like" and blurry shapes produced by the Baseline model, these samples exhibit sharp high-frequency details. The model successfully captures complex geometries, such as the distinct wings of airplanes and the structural frames of bicycles, with clean separation from the background. This visual fidelity confirms that the drop in FID score corresponds to a genuine visual improvement.
+
+\begin{figure}[h]
+    \centering
+    % REPLACE with your BEST RESULT image (Dim 128)
+    \includegraphics[width=0.6\textwidth]{best_generated_samples_dim128.png}
+    \caption{Generated samples from our best model (Dim 128, Step 100k). The images show sharp object boundaries and recognizable diversity across classes (planes, boats, cars).}
+    \label{fig:best_result}
+\end{figure}
+
+\section{Discussion and Future Work (Shrey Khandelwal)}
+
+\subsection{Discussion of Findings}
+Our experiments on the SYSU-Shapes dataset using DDPM model yielded critical insights regarding the relationship between dataset size, model capacity, and overfitting in diffusion models.
+
+\begin{itemize}
+    \item \textbf{Overfitting in Low-Capacity Models:} We initially hypothesized that a smaller model (Dim 64) would act as a regularizer. However, we observed the opposite instead, the 64-dimensional model exhibited clear signs of overfitting. As seen in our training logs, the generation quality (FID) peaked early and then degraded, while the loss oscillated. This suggests that the small model, unable to grasp the complex geometry of the shapes, began to memorize noise patterns or specific training examples rather than learning a generalized distribution.
+    \item \textbf{Capacity as a Stabilizer:} Counter-intuitively, increasing the model capacity (Dim 128) stabilized the training. The larger model had sufficient parameters to learn robust features (wings, wheels, hulls) rather than memorizing noise. This allowed it to continue improving right up to the 100,000th step without the performance degradation seen in the smaller models.
+    \item \textbf{The Role of Augmentation:} Augmentation acted as a double-edged sword. For the overfitting Dim 64 model, adding augmentation made the optimization landscape too difficult, worsening the loss. However, for the high-capacity Dim 128 model, augmentation successfully prevented overfitting, allowing the model to leverage its extra parameters to learn a smoother, more generalized manifold, resulting in our state-of-the-art FID of 59.01.
+\end{itemize}
+
+\subsection{Critique and Limitations}
+While our results improved significantly over the baseline, a critical evaluation reveals several weaknesses in our current approach when compared to the original DDPM literature:
+
+\begin{itemize}
+    \item \textbf{Failure to Match State-of-the-Art Metrics:} Ho et al. (2020) reported an FID of 3.17 on CIFAR-10 (50,000 images). In contrast, our best FID of 59.01 reflects the difficulty of training diffusion models on a significantly smaller dataset (1,541 images) without pre-training. While our scaling strategy improved performance by 47\%, the gap between 59.01 and the theoretical lower bound of ~3 highlights the dependency of DDPMs on large-scale data. Our best FID of 59.01, while a major improvement for this specific context, indicates that the generated distribution still diverges significantly from the real data. This is likely a direct consequence of the dataset size (1,541 images) being orders of magnitude smaller than standard benchmarks (50,000+ images).
+    \item \textbf{Architectural Simplicity:} We utilized a standard U-Net architecture without modern enhancements like attention mechanisms at lower resolutions or adaptive group normalization. The "blurriness" observed in our generated samples is characteristic of this vanilla architecture, which tends to average out high-frequency details when uncertainty is high.
+    \item \textbf{Resolution Constraints:} We restricted generation to $64 \times 64$ to accommodate computational limits on the Rivanna cluster. This resolution is insufficient for capturing fine-grained textures (e.g., tire treads, window frames), limiting the practical utility of the generated images.
+\end{itemize}
+
+\subsection{Future Work}
+To address these critiques, we propose the following improvements:
+
+\begin{enumerate}
+    \item \textbf{Classifier-Free Guidance:} To improve structural coherence, we would implement Classifier-Free Guidance. Conditioning the model on class labels would help separate the distinct distributions of "Cars" vs. "Planes," likely reducing the FID score by resolving mode confusion.
+    \item \textbf{Cascade Diffusion for Super-Resolution:} To tackle the blurriness issue, we propose training a cascade pipeline: a base model generating $64 \times 64$ images followed by a separate super-resolution diffusion model upscaling to $128 \times 128$. This decouples structure generation from texture generation.
+    \item \textbf{Architectural Modernization:} Adopting a Latent Diffusion Model (LDM) approach would allow us to train in a compressed latent space. This would effectively increase the "receptive field" of the model without increasing computational cost, potentially allowing for higher-fidelity generation even with limited data.
+\end{enumerate}
+
+\section{Conclusion}
+In this project, we successfully implemented and optimized a DDPM for unconditional image generation. Through a rigorous ablation study involving five distinct configurations, we demonstrated that model capacity was the decisive factor. While the smaller 64-dimensional model succumbed to overfitting—memorizing noise rather than structure—scaling the dimension to 128 provided the necessary capacity to learn robust features. This change reduced the FID score from 111.94 to 59.01. Our findings highlight a crucial lesson: ensuring sufficient model capacity is a prerequisite for high-quality generation, even when training data is limited.
+
+\appendix
+\section{Detailed Experimental Results}
+
+This appendix provides granular training dynamics for each of the five experimental configurations.
+
+\subsection{Individual Training Loss Curves}
+\begin{figure}[H!]
+    \centering
+    \begin{tabular}{cc}
+    \includegraphics[width=0.45\textwidth]{loss_baseline_dim_64.png} &
+    \includegraphics[width=0.45\textwidth]{loss_low_lr.png} \\
+    (a) Baseline (Dim 64) & (b) Low LR \\
+    \includegraphics[width=0.45\textwidth]{loss_low_lr_plus_aug.png} &
+    \includegraphics[width=0.45\textwidth]{loss_dim_96_plus_aug.png} \\
+    (c) Low LR + Aug & (d) Dim 96 + Aug \\
+    \multicolumn{2}{c}{\includegraphics[width=0.45\textwidth]{loss_dim_128_plus_aug.png}} \\
+    \multicolumn{2}{c}{(e) Dim 128 + Aug (Best)}
+    \end{tabular}
+    \caption{Individual Training Loss trajectories. Note the instability in (a) and (c) compared to the smooth convergence of (e).}
+    \label{fig:app_loss}
+\end{figure}
+
+\subsection{Individual FID Score Trajectories}
+\begin{figure}[H]
+    \centering
+    \begin{tabular}{cc}
+    \includegraphics[width=0.45\textwidth]{fid_baseline_dim_64.png} &
+    \includegraphics[width=0.45\textwidth]{fid_low_lr.png} \\
+    (a) Baseline (Dim 64) & (b) Low LR \\
+    \includegraphics[width=0.45\textwidth]{fid_low_lr_+_aug.png} &
+    \includegraphics[width=0.45\textwidth]{fid_dim_96_+_aug.png} \\
+    (c) Low LR + Aug & (d) Dim 96 + Aug \\
+    \multicolumn{2}{c}{\includegraphics[width=0.45\textwidth]{fid_dim_128_+_aug.png}} \\
+    \multicolumn{2}{c}{(e) Dim 128 + Aug (Best)}
+    \end{tabular}
+    \caption{Individual FID Scores over training steps. Red star indicates the best checkpoint.}
+    \label{fig:app_fid}
+\end{figure}
+
+\subsection{Individual Inception Score Trajectories}
+\begin{figure}[H]
+    \centering
+    \begin{tabular}{cc}
+    \includegraphics[width=0.45\textwidth]{is_baseline_dim_64.png} &
+    \includegraphics[width=0.45\textwidth]{is_low_lr.png} \\
+    (a) Baseline (Dim 64) & (b) Low LR \\
+    \includegraphics[width=0.45\textwidth]{is_low_lr_+_aug.png} &
+    \includegraphics[width=0.45\textwidth]{is_dim_96_+_aug.png} \\
+    (c) Low LR + Aug & (d) Dim 96 + Aug \\
+    \multicolumn{2}{c}{\includegraphics[width=0.45\textwidth]{is_dim_128_+_aug.png}} \\
+    \multicolumn{2}{c}{(e) Dim 128 + Aug (Best)}
+    \end{tabular}
+    \caption{Individual Inception Scores over training steps}
+    \label{fig:app_is}
+\end{figure}
+
+\bibliography{main}
+\end{document}

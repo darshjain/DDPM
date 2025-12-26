@@ -3,7 +3,14 @@ from denoising_diffusion_pytorch import Unet, GaussianDiffusion, Trainer
 import time
 import sys
 from gpu_monitor import GPUMemoryMonitor, print_gpu_info
-
+from torchvision import transforms
+from torch.utils.data import Dataset, DataLoader
+from pathlib import Path
+from PIL import Image
+import numpy as np
+from torch import nn
+from torchvision.models import inception_v3
+from scipy.stats import entropy
 
 # ---------- device selection ----------
 def get_device():
@@ -14,89 +21,133 @@ def get_device():
     else:
         print("\n" + "="*70)
         print("ERROR: No CUDA GPU detected!")
-        print("This script is optimized for CUDA GPUs only.")
-        print("Please run on a machine with NVIDIA GPU and CUDA installed.")
-        print("="*70 + "\n")
         sys.exit(1)
 
+# ========== Inception Score Calculator ==========
+class InceptionScore:
+    def __init__(self, device):
+        self.device = torch.device('cpu')  # Force CPU for stability
+        self.model = None
 
-# ========== Enhanced Trainer with Memory Monitoring ==========
+    def load_model(self):
+        if self.model is None:
+            try:
+                from torchvision.models import Inception_V3_Weights
+                weights = Inception_V3_Weights.DEFAULT
+                self.model = inception_v3(weights=weights).to(self.device)
+            except (ImportError, AttributeError):
+                self.model = inception_v3(pretrained=True).to(self.device)
+            self.model.eval()
+
+    def calculate(self, images, splits=1):
+        self.load_model()
+        images = images.cpu()
+        N = len(images)
+        up = nn.Upsample(size=(299, 299), mode='bilinear', align_corners=False)
+        preds = []
+        batch_size = 32
+        with torch.no_grad():
+            for i in range(0, N, batch_size):
+                batch = images[i:i + batch_size]
+                batch = up(batch)
+                mean = torch.tensor([0.485, 0.456, 0.406], device=self.device).view(1, 3, 1, 1)
+                std = torch.tensor([0.229, 0.224, 0.225], device=self.device).view(1, 3, 1, 1)
+                batch = (batch - mean) / std
+                output = self.model(batch)
+                preds.append(torch.nn.functional.softmax(output, dim=1).cpu().numpy())
+        preds = np.concatenate(preds, axis=0)
+        split_scores = []
+        chunk_size = N // splits
+        if chunk_size == 0:
+             splits = 1
+             chunk_size = N
+        for k in range(splits):
+            part = preds[k * chunk_size : (k + 1) * chunk_size, :]
+            py = np.mean(part, axis=0)
+            scores = []
+            for i in range(part.shape[0]):
+                pyx = part[i, :]
+                scores.append(entropy(pyx, py))
+            split_scores.append(np.exp(np.mean(scores)))
+        return np.mean(split_scores), np.std(split_scores)
+
+# ========== Augmented Dataset ==========
+class AugmentedDataset(Dataset):
+    def __init__(self, folder, image_size, exts=['jpg', 'jpeg', 'png', 'tiff']):
+        super().__init__()
+        self.folder = folder
+        self.image_size = image_size
+        self.paths = [p for ext in exts for p in Path(f'{folder}').glob(f'**/*.{ext}')]
+        
+        # BASELINE V4 CONFIGURATION: Mild Augmentation (Horizontal Flip)
+        self.transform = transforms.Compose([
+            transforms.Resize((image_size, image_size)),
+            transforms.RandomHorizontalFlip(p=0.5), 
+            transforms.ToTensor(),
+        ])
+        
+    def __len__(self):
+        return len(self.paths)
+
+    def __getitem__(self, index):
+        path = self.paths[index]
+        img = Image.open(path).convert('RGB')
+        return self.transform(img)
+
+def cycle(dl):
+    while True:
+        for data in dl:
+            yield data
+
+# ========== Enhanced Trainer ==========
 class MonitoredTrainer:
-    """Wraps the Trainer with real-time GPU memory monitoring in tqdm bar."""
-
     def __init__(self, trainer, memory_monitor):
         self.trainer = trainer
         self.memory_monitor = memory_monitor
         self.start_time = None
+        self.inception_scorer = InceptionScore(torch.device('cpu'))
         self._patch_trainer()
 
     def _patch_trainer(self):
-        """Monkey-patch the trainer's train method to inject GPU stats into tqdm."""
         def patched_train():
-            """Patched train method that updates tqdm with GPU stats."""
             accelerator = self.trainer.accelerator
             device = accelerator.device
-
-            # Import tqdm here to match the library
             from tqdm import tqdm
-
             with tqdm(initial=self.trainer.step, total=self.trainer.train_num_steps,
                      disable=not accelerator.is_main_process) as pbar:
-
                 while self.trainer.step < self.trainer.train_num_steps:
                     self.trainer.model.train()
                     total_loss = 0.
-
                     for _ in range(self.trainer.gradient_accumulate_every):
                         data = next(self.trainer.dl).to(device)
-
                         with self.trainer.accelerator.autocast():
                             loss = self.trainer.model(data)
                             loss = loss / self.trainer.gradient_accumulate_every
                             total_loss += loss.item()
-
                         self.trainer.accelerator.backward(loss)
-
-                    # Update tqdm with loss AND GPU stats
                     gpu_stats = self.memory_monitor.get_stats_string()
                     pbar.set_description(f'loss: {total_loss:.4f}')
                     pbar.set_postfix_str(gpu_stats)
-
                     accelerator.wait_for_everyone()
                     accelerator.clip_grad_norm_(self.trainer.model.parameters(), self.trainer.max_grad_norm)
-
                     self.trainer.opt.step()
                     self.trainer.opt.zero_grad()
-
                     accelerator.wait_for_everyone()
-
                     self.trainer.step += 1
                     if accelerator.is_main_process:
                         self.trainer.ema.update()
-
                         if self.trainer.step != 0 and self.trainer.step % self.trainer.save_and_sample_every == 0:
                             milestone = self.trainer.step // self.trainer.save_and_sample_every
-
-                            # ALWAYS save checkpoint first (before sampling which might crash)
                             accelerator.print(f"Saving checkpoint at step {self.trainer.step}...")
                             self.trainer.save(milestone)
-
-                            # Now try sampling (safe to fail - checkpoint already saved)
                             self.trainer.ema.ema_model.eval()
-
                             with torch.inference_mode():
                                 from denoising_diffusion_pytorch.denoising_diffusion_pytorch import num_to_groups
-
-                                # Temporarily disable flash attention for sampling to avoid kernel issues
-                                # This is necessary because sampling uses different dtypes than training
                                 def set_flash_attn(model, enable):
-                                    """Recursively enable/disable flash attention in all attention modules."""
                                     for module in model.modules():
                                         if hasattr(module, 'flash'):
                                             module.flash = enable
-
                                 set_flash_attn(self.trainer.ema.ema_model, False)
-
                                 try:
                                     accelerator.print("Generating samples...")
                                     batches = num_to_groups(self.trainer.num_samples, self.trainer.batch_size)
@@ -104,152 +155,86 @@ class MonitoredTrainer:
                                     accelerator.print("✓ Sample generation successful")
                                 except Exception as e:
                                     accelerator.print(f"✗ Sampling failed: {e}")
-                                    accelerator.print("  Checkpoint saved, skipping sample generation")
                                     all_images_list = None
-                                finally:
-                                    # Always restore flash attention for training
-                                    set_flash_attn(self.trainer.ema.ema_model, True)
-
-                            # Only save images if sampling succeeded
-                            if all_images_list is not None:
-                                all_images = torch.cat(all_images_list, dim=0)
-
-                                from torchvision import utils
-                                import math
-                                utils.save_image(all_images, str(self.trainer.results_folder / f'sample-{milestone}.png'),
-                                               nrow=int(math.sqrt(self.trainer.num_samples)))
-                                accelerator.print(f"✓ Saved samples to sample-{milestone}.png")
-
-                                if self.trainer.calculate_fid:
-                                    try:
-                                        fid_score = self.trainer.fid_scorer.fid_score()
-                                        accelerator.print(f'fid_score: {fid_score}')
-                                    except Exception as e:
-                                        accelerator.print(f"FID calculation failed: {e}")
-
-                                if self.trainer.save_best_and_latest_only:
-                                    if self.trainer.best_fid > fid_score:
-                                        self.trainer.best_fid = fid_score
-                                        self.trainer.save("best")
-                                    self.trainer.save("latest")
-
+                                if all_images_list is not None:
+                                    all_images = torch.cat(all_images_list, dim=0)
+                                    from torchvision import utils
+                                    import math
+                                    utils.save_image(all_images, str(self.trainer.results_folder / f'sample-{milestone}.png'),
+                                                   nrow=int(math.sqrt(self.trainer.num_samples)))
+                                    accelerator.print(f"✓ Saved samples to sample-{milestone}.png")
+                                    if self.trainer.save_best_and_latest_only:
+                                        self.trainer.save("latest")
                     pbar.update(1)
-
             accelerator.print('training complete')
-
         self.trainer.train = patched_train
 
     def train(self):
-        """Train with background memory monitoring and detailed logging."""
         self.start_time = time.time()
-
-        # Print training configuration
-        print(f"\n{'='*70}")
-        print(f"{'STARTING TRAINING':^70}")
-        print(f"{'='*70}")
+        print(f"\n{'='*70}\n{'STARTING BASELINE TRAINING':^70}\n{'='*70}")
         print(f"  Training steps:   {self.trainer.train_num_steps:,}")
-        print(f"  Batch size:       {self.trainer.batch_size}")
-        print(f"  Gradient accum:   {self.trainer.gradient_accumulate_every}")
-        print(f"  Effective batch:  {self.trainer.batch_size * self.trainer.gradient_accumulate_every}")
         print(f"  Learning rate:    {self.trainer.opt.param_groups[0]['lr']:.2e}")
-        print(f"  Save interval:    Every {self.trainer.save_and_sample_every} steps")
-        print(f"  AMP enabled:      {self.trainer.accelerator.mixed_precision != 'no'}")
+        print(f"  Augmentation:     RandomHorizontalFlip (Mild)")
         print(f"{'='*70}\n")
-
-        # Start background memory monitoring
-        print("Starting GPU memory monitoring...")
         self.memory_monitor.start_background_monitoring()
-
         try:
-            # Run patched training with GPU stats in tqdm
             self.trainer.train()
         except KeyboardInterrupt:
-            print("\n\n" + "="*70)
-            print("Training interrupted by user!")
-            print("="*70)
+            print("Training interrupted!")
         except Exception as e:
-            print(f"\n\n" + "="*70)
-            print(f"Training failed with error: {e}")
-            print("="*70)
+            print(f"Training failed: {e}")
             raise
         finally:
-            # Stop monitoring and print final stats
             self.memory_monitor.stop_background_monitoring()
-            self.print_final_stats()
-
-    def print_final_stats(self):
-        """Print final training statistics."""
-        elapsed_time = time.time() - self.start_time if self.start_time else 0
-        hours = int(elapsed_time // 3600)
-        minutes = int((elapsed_time % 3600) // 60)
-        seconds = int(elapsed_time % 60)
-
-        print(f"\n{'='*70}")
-        print(f"{'TRAINING SUMMARY':^70}")
-        print(f"{'='*70}")
-        print(f"  Total training time:  {hours:02d}:{minutes:02d}:{seconds:02d}")
-        print(f"{'='*70}\n")
-
-        self.memory_monitor.print_stats()
-
 
 if __name__ == '__main__':
-    # ---------- device setup ----------
     device = get_device()
     print_gpu_info(device)
-
-    # Initialize memory monitor
     memory_monitor = GPUMemoryMonitor(device)
 
-    # ---------- model ----------
     print("Loading model...")
     model = Unet(
-        dim=64,
+        dim=64,                 # BASELINE DIM
         dim_mults=(1, 2, 4, 8),
         channels=3,
-        flash_attn=True  # Enable flash attention on CUDA
+        flash_attn=False
     ).to(device)
 
-    print(f"Model loaded. Parameters: {sum(p.numel() for p in model.parameters()):,}")
-    memory_monitor.update()
-    stats = memory_monitor.get_stats()
-    print(f"Model VRAM usage: {stats['current']:.2f} GB\n")
-
-    # ---------- diffusion ----------
     diffusion = GaussianDiffusion(
         model,
         image_size=64,
         timesteps=1000,
         sampling_timesteps=250,
-        objective='pred_noise'  # L2 loss on noise prediction
+        objective='pred_noise'
     )
 
-    # ---------- monkey-patch cpu_count to limit workers ----------
-    # Set to 0 to use main process - avoids DataLoader bottleneck on HPC
     import denoising_diffusion_pytorch.denoising_diffusion_pytorch as ddp_module
     original_cpu_count_fn = ddp_module.cpu_count
-    ddp_module.cpu_count = lambda: 16  # Use main process for data loading
+    ddp_module.cpu_count = lambda: 16
 
-    # ---------- trainer ----------
     trainer = Trainer(
         diffusion,
         folder='./sysu-shape-dataset/combined/',
-        train_batch_size=256,  # Increased - monitor VRAM in tqdm bar
-        train_lr=1e-4,
-        train_num_steps=30000,
+        train_batch_size=64,    # BASELINE BATCH SIZE
+        train_lr=1e-4,          # BASELINE LR
+        train_num_steps=70000,  # BASELINE STEPS
         gradient_accumulate_every=1,
         ema_decay=0.995,
-        amp=False,  # Enable mixed precision on CUDA
-        save_and_sample_every=2000,
-        results_folder='./results_combinedV2',
-        num_samples=25,
-        calculate_fid=True,
+        amp=False,
+        save_and_sample_every=2000, # BASELINE SAVE INTERVAL
+        results_folder='./results_combinedV4-mild-augmented-more-steps', # MATCHING FOLDER
+        num_samples=64,
+        calculate_fid=False,
     )
 
-    # Restore original cpu_count
+    print("Replacing dataset with AugmentedDataset...")
+    ds = AugmentedDataset('./sysu-shape-dataset/combined/', 64)
+    dl = DataLoader(ds, batch_size=64, shuffle=True, pin_memory=True, num_workers=16)
+    dl = trainer.accelerator.prepare(dl)
+    trainer.dl = cycle(dl)
+    trainer.ds = ds
     ddp_module.cpu_count = original_cpu_count_fn
 
-    # ---------- run with monitoring ----------
-    print("Initializing monitored trainer...\n")
     monitored_trainer = MonitoredTrainer(trainer, memory_monitor)
     monitored_trainer.train()
+
